@@ -3,16 +3,18 @@ var express = require('express');
 var uuid = require('node-uuid');
 var app = express();
 
-function Toon(username, password) {
+function Toon(username, password, log) {
 	this.username = username;
 	this.password = password;
-	
+	this.log = log;
+
 	this.sessionstate = null;
 	// Contains the last response from the server.
 	this.toondatastate = null;
 	// Contains the last thermostat info received from the server.
 	// Not always the latest data, because the server does not always return thermostat info.
 	this.toonthermostatstate = null;
+	this.lastupdate = new Date(0);
 
 	var self = this;
 
@@ -21,10 +23,10 @@ function Toon(username, password) {
 		if (!err) {		
 			self.getToonData(function(err, data) {
 				if (!err) {
-					console.log(data);
-					self.toondatastate = JSON.parse(data);
+					self.toondatastate = data;
 					if (self.toondatastate.hasOwnProperty('thermostatInfo')) {
 						self.toonthermostatstate = self.toondatastate.thermostatInfo;
+						self.lastupdate = new Date();
 					}
 				}
 			});
@@ -35,10 +37,10 @@ function Toon(username, password) {
 	setInterval(function updateToonData() {
 		self.getToonData(function(err, data) {
 			if (!err) {
-				console.log(data);
-				self.toondatastate = JSON.parse(data);
+				self.toondatastate = data;
 				if (self.toondatastate.hasOwnProperty('thermostatInfo')) {
 					self.toonthermostatstate = self.toondatastate.thermostatInfo;
+					self.lastupdate = new Date();
 				}
 			}
 		});
@@ -87,12 +89,15 @@ Toon.prototype = {
 			  		}
 			  	}, function(err, response, body) {
 			  		if (!err && response.statusCode == 200) {
+			  			self.log("Succesfully logged in to Toon.");
 						callback(null, body);
 					} else {
+						self.log("There was an error logging in to Toon.");
 						callback(err);
 					}
 			  	});	
 		  	} else {
+		  		self.log("There was an error logging in to Toon.");
 		  		callback(err);
 		  	}
 		  });
@@ -119,7 +124,7 @@ Toon.prototype = {
 		 		}
 	  		});			
 		} else {
-			callback(false);
+			callback(new Error("No active session"));
 		}
 	},
 
@@ -133,12 +138,15 @@ Toon.prototype = {
 				    		clientId: self.sessionstate.clientId,
 				    		clientIdChecksum: self.sessionstate.clientIdChecksum,
 				    		random: uuid.v4()
-		  		}
+		  		},
+		  		json: true,
+		  		timeout: 5000
 		  	}, function(err, response, body) {
-		  		if (!err && response.statusCode == 200) {
+		  		// If JSON is not valid, body becomes undefined.
+		  		if (!err && response.statusCode == 200 && (typeof body !== "undefined")) {
 		  			callback(null, body);
 		  		} else {
-		  			callback(err);
+		  			callback(new Error("Invalid Server Response."));
 		  		}
 			});
 		} else {
