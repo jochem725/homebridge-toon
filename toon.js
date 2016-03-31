@@ -18,7 +18,7 @@ function Toon(username, password, log) {
 
 	var self = this;
 
-	// Establish session for the first time and fetch the data to begin with.
+	//Establish session for the first time and fetch the data to begin with.
 	self.refreshSession(function(err) { 
 		if (!err) {		
 			self.getToonData(function(err, data) {
@@ -72,7 +72,7 @@ Toon.prototype = {
 	  		method: "POST",
 	  		form: {
 	    		username: self.username,
-	    		password: self.password,
+	    		password: self.password
 	  		}
 	  	}, function(err, response, body) {
 	  		if (!err && response.statusCode == 200) {
@@ -145,12 +145,18 @@ Toon.prototype = {
 		  		// If JSON is not valid, body becomes undefined.
 		  		if (!err && response.statusCode == 200 && (typeof body !== "undefined")) {
 		  			callback(null, body);
+		  		} else if (!err && response.statusCode == 403) {
+					self.refreshSession(function(err) {
+						callback(new Error("Session error, attempting to re-establish a new connection to Toon."));
+					});		  			
 		  		} else {
 		  			callback(new Error("Invalid Server Response."));
 		  		}
 			});
 		} else {
-			callback(new Error("No active session."));
+			self.refreshSession(function(err) {
+				callback(new Error("No active session, an attempt has been made to connect to Toon."));
+			});
 		}		  		
 	},
 
@@ -171,13 +177,19 @@ Toon.prototype = {
 		  	}, function(err, response, body) {
 		  		if (!err && response.statusCode == 200) {
 		  			callback(null);	
+				} else if (!err && response.statusCode == 403) {
+					self.refreshSession(function(err) {
+						callback(new Error("Session error, attempting to re-establish a new connection to Toon."));
+					});		  			
 		  		} else {
-		  			callback(err);	
+		  			callback(new Error("Invalid Server Response."));
 		  		}
-		  	});		
+			});
 		} else {
-			callback(new Error("No active session"));
-		} 	
+			self.refreshSession(function(err) {
+				callback(new Error("No active session, an attempt has been made to connect to Toon."));
+			});
+		}	
 	},
 
 	setToonState: function (state, callback) {
@@ -202,12 +214,18 @@ Toon.prototype = {
 			  	}, function(err, response, body) {
 			  		if (!err && response.statusCode == 200) {
 			  			callback(null);
-			  		} else {
-			  			callback(err);
-			  		}
-			  });			
+				} else if (!err && response.statusCode == 403) {
+					self.refreshSession(function(err) {
+						callback(new Error("Session error, attempting to re-establish a new connection to Toon."));
+					});		  			
+		  		} else {
+		  			callback(new Error("Invalid Server Response."));
+		  		}
+			});
 		} else {
-			callback(new Error("No active session"));
+			self.refreshSession(function(err) {
+				callback(new Error("No active session, an attempt has been made to connect to Toon."));
+			});
 		}
 	}	 	
 };	
