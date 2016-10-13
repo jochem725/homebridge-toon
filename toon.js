@@ -103,7 +103,7 @@ Toon.prototype = {
                 password: password
             },
             json: true,
-            timeout: 10000
+            timeout: 30000
         }).then(function (response) {
             self.log('Retrieving client data from Toon op Afstand...');
             var body = response.body;
@@ -135,7 +135,7 @@ Toon.prototype = {
                         random: uuid.v4()
                     },
                     json: true,
-                    timeout: 20000
+                    timeout: 30000
                 })
             })
             .then(function (response) {
@@ -181,7 +181,8 @@ Toon.prototype = {
                         clientId: self.clientData.clientId,
                         clientIdChecksum: self.clientData.clientIdChecksum,
                         value: destination_temperature,
-                        random: uuid.v4()
+                        random: uuid.v4(),
+                        timeout: 10000
                     },
                     json: true
                 })
