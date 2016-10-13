@@ -135,7 +135,7 @@ Toon.prototype = {
                         random: uuid.v4()
                     },
                     json: true,
-                    timeout: 10000
+                    timeout: 20000
                 })
             })
             .then(function (response) {
