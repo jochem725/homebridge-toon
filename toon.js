@@ -125,7 +125,6 @@ Toon.prototype = {
                 }
             })
             .then(function() {
-                self.log('Retrieving data update from Toon...');
                 return request({
                     url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/retrieveToonState",
                     method: "GET",
