@@ -1,233 +1,231 @@
-var request = require("request");
+var Promise = require('bluebird');
+var request = Promise.promisify(require("request"));
 var express = require('express');
 var uuid = require('node-uuid');
-var app = express();
+var events = require('events');
 
 function Toon(username, password, log) {
 	this.username = username;
 	this.password = password;
 	this.log = log;
+    this.emitter = new events.EventEmitter();
 
-	this.sessionstate = null;
-	// Contains the last response from the server.
-	this.toondatastate = null;
-	// Contains the last thermostat info received from the server.
-	// Not always the latest data, because the server does not always return thermostat info.
-	this.toonthermostatstate = null;
-	this.lastupdate = new Date(0);
+
+    this.authenticating = false;
+	this.initialized = false;
+	this.clientData = {};
+
+	this.thermostatInfo = {};
 
 	var self = this;
+    self.updateToonData(self.initialized);
 
-	//Establish session for the first time and fetch the data to begin with.
-	self.refreshSession(function(err) { 
-		if (!err) {		
-			self.getToonData(function(err, data) {
-				if (!err) {
-					self.toondatastate = data;
-					if (self.toondatastate.hasOwnProperty('thermostatInfo')) {
-						self.toonthermostatstate = self.toondatastate.thermostatInfo;
-						self.lastupdate = new Date();
-					}
-				}
-			});
-		}
-	});
-
-	// Fetch new data every 30 seconds.
-	setInterval(function updateToonData() {
-		self.getToonData(function(err, data) {
-			if (!err) {
-				self.toondatastate = data;
-				if (self.toondatastate.hasOwnProperty('thermostatInfo')) {
-					self.toonthermostatstate = self.toondatastate.thermostatInfo;
-					self.lastupdate = new Date();
-				}
-			}
-		});
-		
-	}, 30 * 1000);
 }
 
 Toon.prototype = {
+    login: function (username, password) {
+        var self = this;
 
-	refreshSession: function (callback) {
-		var self = this;
+        if (self.authenticating === false) {
+            self.authenticating = true;
 
-		self.logout(function (err) {
-			self.login(function (err, data) {
-				if (!err) {
-					callback(null, data);
-				} else {
-					callback(err);
-				}
-			});
-		});
-	},
+            return Promise.resolve()
+                .then (function() {
+                    if (self.initialized === true) {
+                        return self.logout(self.clientData);
+                    }
+                })
+                .then(function () {
+                    return self.obtainClientData(username, password)
+                })
+                .then(function () {
+                    return self.authenticate()
+                })
+                .then(function() {
+                    self.initialized = true;
+                    self.log('Successfully logged in to Toon.')
+                })
+                .finally(function() {
+                    self.authenticating = false;
+                })
+        }
+    },
 
-	login: function (callback) {
-		var self = this;
+    logout: function (clientData) {
+        var self = this;
 
-		request({
-	  		url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/login",
-	  		method: "POST",
-	  		form: {
-	    		username: self.username,
-	    		password: self.password
-	  		}
-	  	}, function(err, response, body) {
-	  		if (!err && response.statusCode == 200) {
-		  		self.sessionstate = JSON.parse(body);
-				request({
-			  		url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/start",
-			  		method: "GET",
-			  		qs: {
-			    		clientId: self.sessionstate.clientId,
-			    		clientIdChecksum: self.sessionstate.clientIdChecksum,
-			    		agreementId: self.sessionstate.agreements[0].agreementId,
-			    		agreementIdChecksum: self.sessionstate.agreements[0].agreementIdChecksum,
-			    		random: uuid.v4()
-			  		}
-			  	}, function(err, response, body) {
-			  		if (!err && response.statusCode == 200) {
-			  			self.log("Succesfully logged in to Toon.");
-						callback(null, body);
-					} else {
-						self.log("There was an error logging in to Toon.");
-						callback(err);
-					}
-			  	});	
-		  	} else {
-		  		self.log("There was an error logging in to Toon.");
-		  		callback(err);
-		  	}
-		  });
-	},
+        return request({
+            url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/logout",
+            method: "GET",
+            qs: {
+                clientId: clientData.clientId,
+                clientIdChecksum: clientData.clientIdChecksum,
+                random: uuid.v4()
+            }})
+            .then(function () {
+                self.initialized = false;
+                self.clientData = {};
+            })
+            .catch(function (e) {})
+    },
 
-	logout: function (callback) {
-		var self = this;
+    authenticate: function () {
+        var self = this;
+        self.log('Authenticating...');
 
-		if (self.sessionstate !== null) {
-			request({
-	  			url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/logout",
-	  			method: "GET",
-	  			qs: {
-	  				clientId: self.sessionstate.clientId,
-			    	clientIdChecksum: self.sessionstate.clientIdChecksum,
-			    	random: uuid.v4()
-	  			}
-	  		}, function(err, response, body) {
-		  		if (!err && response.statusCode == 200) {
-		  			self.sessionstate = null;
-		  			callback(null);
-		 		} else {
-		 			callback(err);
-		 		}
-	  		});			
-		} else {
-			callback(new Error("No active session"));
-		}
-	},
+        return request({
+            url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/start",
+            method: "GET",
+            qs: {
+                clientId: self.clientData.clientId,
+                clientIdChecksum: self.clientData.clientIdChecksum,
+                agreementId: self.clientData.agreements[0].agreementId,
+                agreementIdChecksum: self.clientData.agreements[0].agreementIdChecksum,
+                random: uuid.v4()
+            },
+            json: true,
+            timeout: 20000
+        }).then(function (response) {
+                var body = response.body;
+                if (response.statusCode !== 200 || body.success === false) {
+                    throw new Error('There was an error authenticating with Toon.\n' + JSON.stringify(body));
+                }
+            })
+    },
 
-	getToonData: function (callback) {
-		var self = this;
-		if (self.sessionstate !== null) {
-			request({
-		  		url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/retrieveToonState",
-		  		method: "GET",
-		  		qs: {
-				    		clientId: self.sessionstate.clientId,
-				    		clientIdChecksum: self.sessionstate.clientIdChecksum,
-				    		random: uuid.v4()
-		  		},
-		  		json: true,
-		  		timeout: 5000
-		  	}, function(err, response, body) {
-		  		// If JSON is not valid, body becomes undefined.
-		  		if (!err && response.statusCode == 200 && (typeof body !== "undefined")) {
-		  			callback(null, body);
-		  		} else if (!err && response.statusCode == 403) {
-					self.refreshSession(function(err) {
-						callback(new Error("Session error, attempting to re-establish a new connection to Toon."));
-					});		  			
-		  		} else {
-		  			callback(new Error("Invalid Server Response."));
-		  		}
-			});
-		} else {
-			self.refreshSession(function(err) {
-				callback(new Error("No active session, an attempt has been made to connect to Toon."));
-			});
-		}		  		
-	},
+    obtainClientData: function (username, password) {
+        var self = this;
+        return request({
+            url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/login",
+            method: "POST",
+            form: {
+                username: username,
+                password: password
+            },
+            json: true,
+            timeout: 10000
+        }).then(function (response) {
+            self.log('Retrieving client data from Toon op Afstand...');
+            var body = response.body;
+            if (response.statusCode == 200 && (typeof body !== "undefined") && body.success === true) {
+                self.clientData = body;
+            } else {
+                throw new Error('There was an error retrieving the client data from Toon.\n' + JSON.stringify(body));
+            }
+        })
+    },
 
-	setToonTemperature: function (temp, callback) {
-		var self = this;
-		var temperature = Math.round(temp * 100);
+    updateToonData: function (initialized) {
+        var self = this;
 
-		if (self.sessionstate !== null) {
-			request({
-		  		url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/setPoint",
-		  		method: "GET",
-		  		qs: {
-				    		clientId: self.sessionstate.clientId,
-				    		clientIdChecksum: self.sessionstate.clientIdChecksum,
-				    		value: temperature,
-				    		random: uuid.v4()
-		  		}
-		  	}, function(err, response, body) {
-		  		if (!err && response.statusCode == 200) {
-		  			callback(null);	
-				} else if (!err && response.statusCode == 403) {
-					self.refreshSession(function(err) {
-						callback(new Error("Session error, attempting to re-establish a new connection to Toon."));
-					});		  			
-		  		} else {
-		  			callback(new Error("Invalid Server Response."));
-		  		}
-			});
-		} else {
-			self.refreshSession(function(err) {
-				callback(new Error("No active session, an attempt has been made to connect to Toon."));
-			});
-		}	
-	},
+        return Promise.resolve()
+            .then(function() {
+                if (initialized === false) {
+                    return self.login(self.username, self.password, self.initialized, self.clientData);
+                }
+            })
+            .then(function() {
+                self.log('Retrieving data update from Toon...');
+                return request({
+                    url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/retrieveToonState",
+                    method: "GET",
+                    qs: {
+                        clientId: self.clientData.clientId,
+                        clientIdChecksum: self.clientData.clientIdChecksum,
+                        random: uuid.v4()
+                    },
+                    json: true,
+                    timeout: 10000
+                })
+            })
+            .then(function (response) {
+                var body = response.body;
+                if (response.statusCode === 200 && (typeof body !== "undefined") && body.success === true) {
+                    if (body.hasOwnProperty('thermostatInfo') === true) {
+                        self.thermostatInfo = body.thermostatInfo;
+                        self.emitter.emit('thermostatUpdate', self.thermostatInfo)
+                    }
+                } else {
+                    throw new Error('Received invalid response from Toon\n +' + JSON.stringify(body));
+                }
+            })
+            .catch(function (e) {
+                self.log(e);
+                self.initialized = false;
+            })
+            .finally(function () {
+                var timeout = (self.initialized === false) ? 10000 : 0;
 
-	setToonState: function (state, callback) {
-		// 0 -> Comfort
-		// 1 -> Thuis
-		// 2 -> Slapen
-		// 3 -> Weg
-		// 4 -> Vakantie
-		var self = this;
-			
-		if (self.sessionstate !== null) {			
-			request({
-			  		url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/schemeState",
-			  		method: "GET",
-			  		qs: {
-					    		clientId: self.sessionstate.clientId,
-					    		clientIdChecksum: self.sessionstate.clientIdChecksum,
-					    		state: 2,
-					    		temperatureState: state,
-					    		random: uuid.v4()
-			  		}
-			  	}, function(err, response, body) {
-			  		if (!err && response.statusCode == 200) {
-			  			callback(null);
-				} else if (!err && response.statusCode == 403) {
-					self.refreshSession(function(err) {
-						callback(new Error("Session error, attempting to re-establish a new connection to Toon."));
-					});		  			
-		  		} else {
-		  			callback(new Error("Invalid Server Response."));
-		  		}
-			});
-		} else {
-			self.refreshSession(function(err) {
-				callback(new Error("No active session, an attempt has been made to connect to Toon."));
-			});
-		}
-	}	 	
-};	
+                setTimeout(function () {
+                    self.updateToonData(self.initialized);
+                }, timeout);
+            });
+    },
 
-module.exports = Toon;
+    setToonTemperature: function (temperature, initialized) {
+        var self = this;
+        self.log('Setting Toon Temperature to ', temperature);
+
+        var destination_temperature = Math.round(temperature * 100);
+        return Promise.resolve()
+            .then(function() {
+                if (initialized === false) {
+                    return self.login(self.username, self.password, self.initialized, self.clientData);
+                }
+            })
+            .then(function() {
+                return request({
+                    url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/setPoint",
+                    method: "GET",
+                    qs: {
+                        clientId: self.clientData.clientId,
+                        clientIdChecksum: self.clientData.clientIdChecksum,
+                        value: destination_temperature,
+                        random: uuid.v4()
+                    },
+                    json: true
+                })
+            })
+            .then(function (response) {
+                var body = response.body;
+                if (response.statusCode === 200 && (typeof body !== "undefined") && body.success === true) {
+                    self.log('Successfully set Toon Temperature to ', temperature);
+                    self.thermostatInfo.currentSetpoint = temperature * 100;
+                } else {
+                    throw new Error(body);
+                }
+            })
+            .catch(function (e) {
+                self.initialized = false;
+                self.log('Error setting temperature', e);
+            });
+    },
+
+    setTemperature: function(temperature) {
+        var self = this;
+
+        return self.setToonTemperature(temperature, self.initialized);
+    },
+
+    getThermostatInfo: function() {
+        var self = this;
+
+        return Promise.resolve()
+            .then(function () {
+                return self.thermostatInfo;
+            });
+    },
+
+    getClientData: function() {
+        var self = this;
+
+        return Promise.resolve()
+            .then(function () {
+                return self.clientData;
+            });
+    }
+};
+
+module.exports = function(username, password, log) {
+	return new Toon(username, password, log);
+};

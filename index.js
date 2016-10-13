@@ -1,175 +1,197 @@
 var request = require("request");
-var Toon = require("./toon");
+var toon = require("./toon");
 var Accessory, Service, Characteristic, UUIDGen;
 
 module.exports = function (homebridge) {
-  	Accessory = homebridge.platformAccessory;
-  	Service = homebridge.hap.Service;
-  	Characteristic = homebridge.hap.Characteristic;
-  	UUIDGen = homebridge.hap.uuid;
+    Accessory = homebridge.platformAccessory;
+    Service = homebridge.hap.Service;
+    Characteristic = homebridge.hap.Characteristic;
+    UUIDGen = homebridge.hap.uuid;
 
-  	homebridge.registerAccessory("homebridge-toon", "Toon", ToonAccessory);
+    homebridge.registerAccessory("homebridge-toon", "Toon", ToonAccessory);
 };
 
 function ToonAccessory(log, config) {
-	this.log = log;
-	this.name = config.name;
-  this.toon = new Toon(config.username, config.password, this.log);
-  this.lastupdate = null;
+    this.log = log;
+    this.name = config.name;
+    this.toon = toon(config.username, config.password, this.log);
 
-	this.temperatureDisplayUnits = Characteristic.TemperatureDisplayUnits.CELSIUS;
+    var self = this;
 
-  this.log("Toon Initialized, it may take a few minutes before any data will be visible to HomeKit.");
+    self.toon.emitter.on('thermostatUpdate', function(thermostatInfo) {
+        self.updateState(self, thermostatInfo)
+    });
+
+    self.temperatureDisplayUnits = Characteristic.TemperatureDisplayUnits.CELSIUS;
+
+    self.log("Toon Initialized, it may take a few minutes before any data will be visible to HomeKit.");
 }
 
 ToonAccessory.prototype = {
+    updateState: function (accessory, thermostatInfo) {
+        var self = accessory;
 
-  getToonState: function (callback) {
-    var thermostatState = this.toon.toonthermostatstate;
+        self.thermostatService.getCharacteristic(Characteristic.CurrentTemperature).setValue(thermostatInfo.currentTemp / 100, undefined, 'event');
+        self.thermostatService.getCharacteristic(Characteristic.TargetTemperature).setValue(thermostatInfo.currentSetpoint / 100, undefined, 'event');
 
-    if (thermostatState !== null) {
-      this.lastupdate = this.toon.lastupdate;
-      callback(null, thermostatState);
-    } else {
-      this.log("Could not get Toon state. (It may not have been initialized yet.)");
-      callback(new Error("Toon Thermostat Data Error."));
-    }
-  },
-
-  getCurrentHeatingCoolingState: function(callback) {
-    var self = this;
-
-    self.getToonState(function(err, state) {
-      if (!err) {
-        var burnerInfo = state.burnerInfo;
-        var heatingcoolingstate = Characteristic.CurrentHeatingCoolingState.OFF;
-
-        if (state.burnerInfo == '1') {
-          heatingcoolingstate = Characteristic.CurrentHeatingCoolingState.HEAT;
+        var heatingCoolingState;
+        if (thermostatInfo.burnerInfo === '1') {
+            heatingCoolingState = Characteristic.CurrentHeatingCoolingState.HEAT;
         } else {
-          heatingcoolingstate = Characteristic.CurrentHeatingCoolingState.OFF;
+            heatingCoolingState = Characteristic.CurrentHeatingCoolingState.OFF;
         }
 
-        callback(null, heatingcoolingstate);
-      } else {
-        callback(err);
-      }
-    });
-  },
+        self.thermostatService.getCharacteristic(Characteristic.CurrentHeatingCoolingState).setValue(heatingCoolingState, undefined, 'event');
+    },
 
-  setTargetHeatingCoolingState: function(value, callback) {
-    this.log("Setting a Target State is not supported by Toon");
-    callback(new Error("Setting a Target State is not supported by Toon"));
-  },
+    getToonState: function () {
+        var self = this;
+        var thermostatInfo = self.toon.getThermostatInfo();
 
-  getTargetHeatingCoolingState: function(callback) {
-    var self = this;
+        return self.toon.getThermostatInfo()
+            .then(function () {
+                if (thermostatInfo !== {}) {
+                    return thermostatInfo;
+                } else {
+                    throw new Error("Could not get Toon state. (It may not have been initialized yet.)");
+                }
+            })
+    },
 
-    self.getToonState(function(err, state) {
-      if (!err) {
-        var currentTemp = state.currentTemp / 100;
-        var targetTemp = state.currentSetpoint / 100;
-        var heatingcoolingstate = Characteristic.TargetHeatingCoolingState.OFF;
+    getToonClientDataProperty: function (property) {
+        var self = this;
+        var clientData = self.toon.getClientData();
 
-        if (currentTemp < targetTemp) {
-          heatingcoolingstate = Characteristic.TargetHeatingCoolingState.HEAT;
+        if (clientData.hasOwnProperty(property) === true) {
+            return clientData[property];
         } else {
-          heatingcoolingstate = Characteristic.TargetHeatingCoolingState.COOL;
+            return '';
         }
+    },
 
-        callback(null, heatingcoolingstate);
-      } else {
-        callback(err);
-      }
-    });
-  },
+    getCurrentHeatingCoolingState: function (callback) {
+        var self = this;
 
-  getCurrentTemperature: function(callback) {
-    var self = this;
+        self.getToonState()
+            .then(function (thermostatInfo) {
+                var burnerInfo = thermostatInfo.burnerInfo;
 
-    self.getToonState(function(err, state) {
-      if (!err) {
-        var currentTemp = state.currentTemp / 100;
-        self.log("Last dataupdate: ", self.lastupdate);
-        self.log("Current Temperature: ", currentTemp);
-        callback(null, currentTemp);
-      } else {
-        callback(err);
-      }
-    });
-  },
+                // Toon can only activate the heating, so return heat or off.
+                var heatingCoolingState = Characteristic.CurrentHeatingCoolingState.OFF;
 
-  getTargetTemperature: function(callback) {
-    var self = this;
+                if (burnerInfo === '1') {
+                    heatingCoolingState = Characteristic.CurrentHeatingCoolingState.HEAT;
+                }
 
-    self.getToonState(function(err, state) {
-      if (!err) {
-        var targetTemp = state.currentSetpoint / 100;
-        callback(null, targetTemp);
-      } else {
-        callback(err);
-      }
-    });
-  },  
+                callback(null, heatingCoolingState);
+            })
+            .catch(function (err) {
+                self.log("Error getting HeatingCoolingState: ", err);
+                callback(err);
+            });
+    },
 
-  setTargetTemperature: function(value, callback) {
-    var self = this;
+    setTargetHeatingCoolingState: function (value, callback) {
+        var self = this;
 
-    self.getToonState(function(err, state) {
-      if (!err) {
-        self.toon.setToonTemperature(value, function(error) {
-          if (!error) {
-            state.currentSetpoint = value * 100;
-            self.log("Temperature Set to: ", value);
-            callback();
-          } else {
-            callback(new Error("Could not set Toon Temperature"));
-          }
+        // Setting a target is not supported, so it will always become equal to the current target heating cooling state.
+        self.getTargetHeatingCoolingState(function (err, heatingCoolingState) {
+            if (!err) {
+                callback(null, heatingCoolingState);
+            } else {
+                callback(err);
+            }
         });
-      } else {
-        callback(err);
-      }
-    });
-  },
+    },
 
-  getTemperatureDisplayUnits: function(callback) {
-    callback(null, this.temperatureDisplayUnits);
-  },
+    getTargetHeatingCoolingState: function (callback) {
+        callback(null, Characteristic.TargetHeatingCoolingState.AUTO);
+    },
 
-  getServices: function() {
+    getCurrentTemperature: function (callback) {
+        var self = this;
 
-    var informationService = new Service.AccessoryInformation();
+        self.getToonState()
+            .then(function (thermostatInfo) {
+                var currentTemp = thermostatInfo.currentTemp / 100;
+                self.log("Current Temperature: ", currentTemp);
+                callback(null, currentTemp);
+            })
+            .catch(function (err) {
+                self.log("Error getting CurrentTemperature: ", err);
+                callback(err);
+            });
+    },
 
-    informationService
-      .setCharacteristic(Characteristic.Manufacturer, "Eneco")
-      .setCharacteristic(Characteristic.Model, "Toon")
-      .setCharacteristic(Characteristic.SerialNumber, "");
+    getTargetTemperature: function (callback) {
+        var self = this;
 
-    var thermostatService = new Service.Thermostat(this.name);
+        self.getToonState()
+            .then(function (thermostatInfo) {
+                var targetTemp = thermostatInfo.currentSetpoint / 100;
+                callback(null, targetTemp);
+            })
+            .catch(function (err) {
+                self.log("Error getting TargetTemperature: ", err);
+                callback(err);
+            });
+    },
 
-      // Required Characteristics
-      thermostatService
-        .getCharacteristic(Characteristic.CurrentHeatingCoolingState)
-        .on('get', this.getCurrentHeatingCoolingState.bind(this));
+    setTargetTemperature: function (value, callback, context) {
+        var self = this;
 
-      thermostatService
-        .getCharacteristic(Characteristic.TargetHeatingCoolingState)
-        .on('set', this.setTargetHeatingCoolingState.bind(this))
-        .on('get', this.getTargetHeatingCoolingState.bind(this));
+        if (context !== 'event') {
+            self.toon.setTemperature(value)
+                .then(function () {
+                    callback();
+                })
+                .catch(function (err) {
+                    self.log("Error setting TargetTemperature: ", err);
+                    callback(err);
+                });
+        } else {
+            callback(null);
+        }
+    },
 
-      thermostatService
-        .getCharacteristic(Characteristic.CurrentTemperature)
-        .on('get', this.getCurrentTemperature.bind(this));
+    getTemperatureDisplayUnits: function (callback) {
+        callback(null, this.temperatureDisplayUnits);
+    },
 
-      thermostatService
-        .getCharacteristic(Characteristic.TargetTemperature)
-        .on('set', this.setTargetTemperature.bind(this))
-        .on('get', this.getTargetTemperature.bind(this));
+    getServices: function () {
+        var self = this;
+        self.informationService = new Service.AccessoryInformation();
 
-      thermostatService
-        .getCharacteristic(Characteristic.TemperatureDisplayUnits)
-        .on('get', this.getTemperatureDisplayUnits.bind(this));
+        self.informationService
+            .setCharacteristic(Characteristic.Manufacturer, 'Eneco Toon')
+            .setCharacteristic(Characteristic.Model, "Toon")
+            .setCharacteristic(Characteristic.SerialNumber, this.getToonClientDataProperty('displayHardwareVersion'));
 
-      return [informationService, thermostatService];
+        self.thermostatService = new Service.Thermostat(this.name);
+
+        // Required Characteristics
+        self.thermostatService
+            .getCharacteristic(Characteristic.CurrentHeatingCoolingState)
+            .on('get', this.getCurrentHeatingCoolingState.bind(this));
+
+        self.thermostatService
+            .getCharacteristic(Characteristic.TargetHeatingCoolingState)
+            .on('set', this.setTargetHeatingCoolingState.bind(this))
+            .on('get', this.getTargetHeatingCoolingState.bind(this));
+
+        self.thermostatService
+            .getCharacteristic(Characteristic.CurrentTemperature)
+            .on('get', this.getCurrentTemperature.bind(this));
+
+        self.thermostatService
+            .getCharacteristic(Characteristic.TargetTemperature)
+            .on('set', this.setTargetTemperature.bind(this))
+            .on('get', this.getTargetTemperature.bind(this));
+
+        self.thermostatService
+            .getCharacteristic(Characteristic.TemperatureDisplayUnits)
+            .on('get', this.getTemperatureDisplayUnits.bind(this));
+
+        return [self.informationService, self.thermostatService];
     }
 };
