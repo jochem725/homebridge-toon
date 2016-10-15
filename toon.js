@@ -139,13 +139,16 @@ Toon.prototype = {
             })
             .then(function (response) {
                 var body = response.body;
-                if (response.statusCode === 200 && (typeof body !== "undefined") && body.success === true) {
-                    if (body.hasOwnProperty('thermostatInfo') === true) {
-                        self.thermostatInfo = body.thermostatInfo;
-                        self.emitter.emit('thermostatUpdate', self.thermostatInfo)
+
+                if (typeof body !== "undefined") {
+                    if (response.statusCode === 200 && body.success === true) {
+                        if (body.hasOwnProperty('thermostatInfo') === true) {
+                            self.thermostatInfo = body.thermostatInfo;
+                            self.emitter.emit('thermostatUpdate', self.thermostatInfo);
+                        }
+                    } else {
+                        throw new Error('Received invalid response from Toon\n' + JSON.stringify(response));
                     }
-                } else {
-                    throw new Error('Received invalid response from Toon\n +' + JSON.stringify(body));
                 }
             })
             .catch(function (e) {
