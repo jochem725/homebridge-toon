@@ -198,10 +198,6 @@ Toon.prototype = {
                     throw new Error(body);
                 }
             })
-            .catch(function (e) {
-                self.initialized = false;
-                self.log('Error setting temperature', e);
-            });
     },
 
     setTemperature: function(temperature) {
