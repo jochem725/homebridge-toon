@@ -17,9 +17,10 @@
     "homebridge": ">=0.2.0"
   },
   "dependencies": {
-    "request": "^2.69.0",
+    "bluebird": "^3.4.6",
+    "express": "^4.13.4",
     "node-uuid": "^1.4.7",
-    "express": "^4.13.4"
+    "request": "^2.69.0"
   },
   "author": "Jochem Lugtenburg",
   "license": "ISC",
