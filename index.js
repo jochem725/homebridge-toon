@@ -1,5 +1,5 @@
 var request = require("request");
-var toon = require("./toon");
+var Toon = require("./toon");
 var Accessory, Service, Characteristic, UUIDGen;
 
 module.exports = function (homebridge) {
@@ -16,13 +16,13 @@ function ToonAccessory(log, config) {
     this.name = config.name;
 
     // Index selecting the agreement, if a user has multiple agreements (due to moving, etc.).
-    var agreementIndex = 0;
+    this.agreementIndex = 0;
 
     if (config.agreementIndex !== undefined) {
-        agreementIndex = config.agreementIndex;
+        this.agreementIndex = config.agreementIndex;
     }
 
-    this.toon = toon(config.username, config.password, agreementIndex, this.log);
+    this.toon = Toon(config.username, config.password, this.agreementIndex, this.log);
 
     var self = this;
 

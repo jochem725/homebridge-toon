@@ -109,6 +109,23 @@ Toon.prototype = {
             var body = response.body;
             if (response.statusCode == 200 && (typeof body !== "undefined") && body.success === true) {
                 self.clientData = body;
+
+                if (self.initialized === false && body.hasOwnProperty('agreements')) {
+                    if (self.agreementIndex < body.agreements.length) {
+                        self.log("Currently selected agreementIndex: " + self.agreementIndex);
+                    } else {
+                        throw new Error('Incorrect agreementIndex selected, is your config valid?');
+                    }
+
+                    for (var i = 0; i < body.agreements.length; i++) {
+                        var agreement = body.agreements[i];
+                        self.log("agreementIndex: [" + i + "]: "
+                            + agreement.street + " " + agreement.houseNumber
+                            + " " + agreement.postalCode + " " + agreement.city
+                            + " - " + agreement.heatingType);
+                    }
+                }
+
             } else {
                 throw new Error('There was an error retrieving the client data from Toon.\n' + JSON.stringify(body));
             }
@@ -225,6 +242,6 @@ Toon.prototype = {
     }
 };
 
-module.exports = function(username, password, log) {
-	return new Toon(username, password, log);
+module.exports = function(username, password, agreementIndex, log) {
+	return new Toon(username, password, agreementIndex, log);
 };
