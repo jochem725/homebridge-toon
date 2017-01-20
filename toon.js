@@ -4,12 +4,12 @@ var express = require('express');
 var uuid = require('node-uuid');
 var events = require('events');
 
-function Toon(username, password, log) {
+function Toon(username, password, agreementIndex, log) {
 	this.username = username;
 	this.password = password;
 	this.log = log;
     this.emitter = new events.EventEmitter();
-
+    this.agreementIndex = agreementIndex;
 
     this.authenticating = false;
 	this.initialized = false;
@@ -79,8 +79,8 @@ Toon.prototype = {
             qs: {
                 clientId: self.clientData.clientId,
                 clientIdChecksum: self.clientData.clientIdChecksum,
-                agreementId: self.clientData.agreements[0].agreementId,
-                agreementIdChecksum: self.clientData.agreements[0].agreementIdChecksum,
+                agreementId: self.clientData.agreements[self.agreementIndex].agreementId,
+                agreementIdChecksum: self.clientData.agreements[self.agreementIndex].agreementIdChecksum,
                 random: uuid.v4()
             },
             json: true,
