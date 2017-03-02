@@ -4,12 +4,12 @@ var express = require('express');
 var uuid = require('node-uuid');
 var events = require('events');
 
-function Toon(username, password, log) {
+function Toon(username, password, agreementIndex, log) {
 	this.username = username;
 	this.password = password;
 	this.log = log;
     this.emitter = new events.EventEmitter();
-
+    this.agreementIndex = agreementIndex;
 
     this.authenticating = false;
 	this.initialized = false;
@@ -79,8 +79,8 @@ Toon.prototype = {
             qs: {
                 clientId: self.clientData.clientId,
                 clientIdChecksum: self.clientData.clientIdChecksum,
-                agreementId: self.clientData.agreements[0].agreementId,
-                agreementIdChecksum: self.clientData.agreements[0].agreementIdChecksum,
+                agreementId: self.clientData.agreements[self.agreementIndex].agreementId,
+                agreementIdChecksum: self.clientData.agreements[self.agreementIndex].agreementIdChecksum,
                 random: uuid.v4()
             },
             json: true,
@@ -109,6 +109,23 @@ Toon.prototype = {
             var body = response.body;
             if (response.statusCode == 200 && (typeof body !== "undefined") && body.success === true) {
                 self.clientData = body;
+
+                if (self.initialized === false && body.hasOwnProperty('agreements')) {
+                    if (self.agreementIndex < body.agreements.length) {
+                        self.log("Currently selected agreementIndex: " + self.agreementIndex);
+                    } else {
+                        throw new Error('Incorrect agreementIndex selected, is your config valid?');
+                    }
+
+                    for (var i = 0; i < body.agreements.length; i++) {
+                        var agreement = body.agreements[i];
+                        self.log("agreementIndex: [" + i + "]: "
+                            + agreement.street + " " + agreement.houseNumber
+                            + " " + agreement.postalCode + " " + agreement.city
+                            + " - " + agreement.heatingType);
+                    }
+                }
+
             } else {
                 throw new Error('There was an error retrieving the client data from Toon.\n' + JSON.stringify(body));
             }
@@ -225,6 +242,6 @@ Toon.prototype = {
     }
 };
 
-module.exports = function(username, password, log) {
-	return new Toon(username, password, log);
+module.exports = function(username, password, agreementIndex, log) {
+	return new Toon(username, password, agreementIndex, log);
 };
