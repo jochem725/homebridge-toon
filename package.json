@@ -1,8 +1,8 @@
 {
   "name": "homebridge-toon",
-  "version": "0.0.3",
+  "version": "1.0.0",
   "description": "Homebridge Extension for Toon Thermostats",
-  "main": "index.js",
+  "main": "dist/index.js",
   "repository": {
     "type": "git",
     "url": "https://github.com/jochem725/homebridge-toon.git"
@@ -20,7 +20,8 @@
     "bluebird": "^3.4.6",
     "express": "^4.13.4",
     "node-uuid": "^1.4.7",
-    "request": "^2.69.0"
+    "request": "^2.69.0",
+    "typescript": "^2.5.3"
   },
   "author": "Jochem Lugtenburg",
   "license": "ISC",
