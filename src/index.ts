@@ -67,7 +67,7 @@ class ToonAccessory {
             this.configure();
         }
     
-        onUpdate = (thermostatInfo: ThermostatInfo) => {
+        onUpdate = (thermostatInfo: ThermostatInfo) => {            
             const thermostatService = this.accessory.getService(Service.Thermostat);
             
             thermostatService.getCharacteristic(Characteristic.CurrentTemperature).setValue(thermostatInfo.currentTemp / 100, undefined, 'event');

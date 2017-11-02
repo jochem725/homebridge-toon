@@ -158,7 +158,7 @@ export class ToonConnection {
         return clientData;
     }
 
-    private async updateToonData() {
+    updateToonData = async () => {
         if (!this.initialized) {
             await this.initialize()
         }
@@ -174,7 +174,7 @@ export class ToonConnection {
                         random: uuid.v4()
                     },
                     json: true,
-                    timeout: 30000
+                    timeout: 10000
                 });
 
                 if (response.success === true) {
@@ -184,12 +184,9 @@ export class ToonConnection {
                     }
                 }
             } catch (e) {
-                this.log(e);
                 this.logout();
             } finally {
-                setTimeout(() => {
-                    this.updateToonData();
-                }, 10000);
+                setTimeout(this.updateToonData, 10000);
             }
         }
     }
@@ -247,7 +244,7 @@ export class ToonConnection {
     }
 
     public getCurrentTemperature() {
-        return this.thermostatInfo ? this.thermostatInfo.currentTemp / 100: undefined;
+        return this.thermostatInfo ? this.thermostatInfo.currentTemp / 100 : undefined;
     }
 
     public getCurrentSetpoint() {
