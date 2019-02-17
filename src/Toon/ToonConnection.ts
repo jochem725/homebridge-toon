@@ -1,253 +1,179 @@
-import * as request from "request-promise";
-import * as uuid from "node-uuid";
-import ToonConfig from "../config";
-
-export interface ToonClientData {
-    agreements: {
-        agreementId: number;
-        agreementIdChecksum: string;
-        city: string;
-        displayCommonName: string;
-        displayHardwareVersion: string;
-        displaySoftwareVersion: string;
-        houseNumber: number;
-        postalCode: string;
-        street: string;
-        heatingType: string;
-    }[],
-    clientId: string;
-    clientIdChecksum: string;
-    passwordHash: string;
-    sample: boolean;
-    success: boolean;
-}
-
-export interface ThermostatInfo {
-    burnerInfo: string;
-    currentSetpoint: number;
-    currentTemp: number;
-}
-
-interface ToonResponse {
-    success: boolean;
-    thermostatInfo?: ThermostatInfo;
-}
+import ToonConfig from '../config';
+import {
+    API_URL,
+    authenticateToken,
+    ThermostatInfo,
+    Token,
+    ToonAgreement,
+    toonGETRequest,
+    toonPUTRequest,
+    ToonStatus,
+} from './toonapi';
 
 export class ToonConnection {
+  private agreement?: ToonAgreement;
+  private toonStatus?: ToonStatus;
+  private username: string;
+  private password: string;
+  private agreementIndex: number;
 
-    private initialized: boolean;
-    private authenticated: boolean;
-    private clientData?: ToonClientData;
-    private thermostatInfo?: ThermostatInfo;
-    private username: string;
-    private password: string;
-    private agreementIndex: number;
+  private token?: Token;
 
-    constructor(private config: ToonConfig, private log: (format: string, message?: any) => void, private onUpdate: (thermostatInfo: ThermostatInfo) => void) {
+  private consumerKey: string;
+  private consumerSecret: string;
 
-        this.username = this.config.username;
-        this.password = this.config.password;
-        // Index selecting the agreement, if a user has multiple agreements (due to moving, etc.).
-        this.agreementIndex = this.agreementIndex ? this.agreementIndex : 0;
+  constructor(
+    private config: ToonConfig,
+    private log: (format: string, message?: any) => void,
+    private onUpdate: (toonStatus: ToonStatus) => void
+  ) {
+    this.username = this.config.username;
+    this.password = this.config.password;
 
-        this.initialized = false;
-        this.authenticated = false;
+    this.consumerKey = this.config.consumerKey;
+    this.consumerSecret = this.config.consumerSecret;
 
-        this.updateToonData();
+    // Index selecting the agreement, if a user has multiple agreements (due to moving, etc.).
+    this.agreementIndex = this.config.agreementIndex
+      ? this.config.agreementIndex
+      : 0;
+
+    this.initialize().then(() => {
+      setInterval(this.getToonStatus, 10000);
+    });
+  }
+
+  private async initialize() {
+    this.token = await authenticateToken(
+      this.consumerKey,
+      this.consumerSecret,
+      this.username,
+      this.password
+    );
+
+    this.agreement = await this.getAgreementData();
+  }
+
+  private async getAgreementData() {
+    this.log("Getting agreement...");
+
+    let agreements: ToonAgreement[] = await toonGETRequest(
+      `${API_URL}agreements`,
+      this.consumerKey,
+      this.consumerSecret,
+      this.token
+    );
+
+    if (this.agreementIndex < agreements.length) {
+      this.log(`Currently selected agreementIndex: ${this.agreementIndex}`);
+      return agreements[this.agreementIndex];
+    } else {
+      for (const agreementIndex in agreements) {
+        const {
+          street,
+          houseNumber,
+          postalCode,
+          city,
+          heatingType
+        } = agreements[agreementIndex];
+
+        this.log(
+          `agreementIndex: [${agreementIndex}]: ${street} ${houseNumber} ${postalCode} ${city} ${heatingType}`
+        );
+      }
+
+      throw new Error(
+        "Incorrect agreementIndex selected, is your config valid?"
+      );
+    }
+  }
+
+  private getToonStatus = async () => {
+    if (!this.agreement) {
+      throw Error("Requested status but there is no agreement.");
     }
 
-    private async initialize() {
-        this.initialized = await this.login();
+    let toonStatus: ToonStatus = await toonGETRequest(
+      `${API_URL}${this.agreement.agreementId}/status`,
+      this.consumerKey,
+      this.consumerSecret,
+      this.token
+    );
+
+    if (toonStatus.thermostatInfo) {
+      this.toonStatus = toonStatus;
+      this.onUpdate(this.toonStatus);
+    }
+  };
+
+  private async setToonTemperature(temperature: number) {
+    if (!this.agreement) {
+      throw Error("Setting temperature but there is no agreement.");
     }
 
-    private async login() {
-        // Check if there is another session, else logout.
-        if (this.initialized) {
-            await this.logout();
-        }
-
-        // Obtain ClientData so we can authenticate.
-        this.clientData = await this.obtainClientData(this.username, this.password);
-
-        // Authenticate using the ClientData.
-        if (this.clientData) {
-            this.authenticated = await this.authenticate(this.clientData);
-            this.log('Successfully logged in to Toon.')            
-        }
-
-        return this.authenticated && this.clientData !== undefined;
+    if (!this.toonStatus) {
+      throw Error("Setting temperature but there is no status information.");
     }
 
-    private async logout() {
-        if (this.clientData) {
-            request({
-                url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/logout",
-                method: "GET",
-                qs: {
-                    clientId: this.clientData.clientId,
-                    clientIdChecksum: this.clientData.clientIdChecksum,
-                    random: uuid.v4()
-                }
-            });
-        }
+    this.log(`Setting Toon Temperature to ${temperature / 100}`);
+    this.toonStatus.thermostatInfo.currentSetpoint = temperature;
 
-        this.initialized = false;
-        this.authenticated = false;
-        this.clientData = undefined;
-    }
+    let currentThermostatInfo: ThermostatInfo = await toonGETRequest(
+      `${API_URL}${this.agreement.agreementId}/thermostat`,
+      this.consumerKey,
+      this.consumerSecret,
+      this.token
+    );
 
-    private async authenticate(clientData: ToonClientData) {
-        this.log('Authenticating...');
+    currentThermostatInfo.currentSetpoint = temperature;
 
-        try {
-            const response = await request({
-                url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/start",
-                method: "GET",
-                qs: {
-                    clientId: clientData.clientId,
-                    clientIdChecksum: clientData.clientIdChecksum,
-                    agreementId: clientData.agreements[this.agreementIndex].agreementId,
-                    agreementIdChecksum: clientData.agreements[this.agreementIndex].agreementIdChecksum,
-                    random: uuid.v4()
-                },
-                json: true,
-                timeout: 20000
-            });
+    const newThermostatInfo = await toonPUTRequest(
+      `${API_URL}${this.agreement.agreementId}/thermostat`,
+      currentThermostatInfo,
+      this.consumerKey,
+      this.consumerSecret,
+      this.token
+    );
 
-            return response.success;
-        } catch (e){
-            throw new Error(`There was an error authenticating with Toon.\n${e.body}`);
-        }
-    }
+    this.log(`Successfully set Toon Temperature to ${temperature / 100}`);
 
-    private async obtainClientData(username: string, password: string) {
-        this.log("Retrieving client data from Toon op Afstand...");
-        let clientData: ToonClientData;
+    this.toonStatus.thermostatInfo = newThermostatInfo;
+  }
 
-        try {
-            clientData = await request({
-                url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/login",
-                method: "POST",
-                form: {
-                    username,
-                    password
-                },
-                json: true,
-                timeout: 30000
-            });
+  public async setTemperature(temperature: number) {
+    const destination_temperature = Math.round(temperature * 100);
 
-            if (clientData.success === true) {
-                if (!this.initialized) {
-                    if (this.agreementIndex < clientData.agreements.length) {
-                        this.log(`Currently selected agreementIndex: ${this.agreementIndex}`);
-                    } else {
-                        throw new Error('Incorrect agreementIndex selected, is your config valid?');
-                    }
-    
-                    for (const agreementIndex in clientData.agreements) {
-                        const { street, houseNumber, postalCode, city, heatingType } = clientData.agreements[agreementIndex];
-    
-                        this.log(`agreementIndex: [${agreementIndex}]: ${street} ${houseNumber} ${postalCode} ${city} ${heatingType}`)
-                    }
-                }
-            }
-        } catch {
-            throw new Error(`There was an error retrieving the client data from Toon.\n${this.clientData}`);            
-        }
+    await this.setToonTemperature(destination_temperature);
+    await this.getToonStatus();
+  }
 
-        return clientData;
-    }
+  public getDisplayCommonName() {
+    return this.agreement ? this.agreement.displayCommonName : "-";
+  }
 
-    updateToonData = async () => {
-        if (!this.initialized) {
-            await this.initialize()
-        }
+  public getHardwareVersion() {
+    return this.agreement ? this.agreement.displayHardwareVersion : "-";
+  }
 
-        if (this.clientData) {
-            try {
-                const response: ToonResponse = await request({
-                    url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/retrieveToonState",
-                    method: "GET",
-                    qs: {
-                        clientId: this.clientData.clientId,
-                        clientIdChecksum: this.clientData.clientIdChecksum,
-                        random: uuid.v4()
-                    },
-                    json: true,
-                    timeout: 10000
-                });
+  public getSoftwareVersion() {
+    return this.agreement ? this.agreement.displaySoftwareVersion : "-";
+  }
 
-                if (response.success === true) {
-                    if (response.thermostatInfo !== undefined) {
-                        this.thermostatInfo = response.thermostatInfo;
-                        this.onUpdate(this.thermostatInfo);
-                    }
-                }
-            } catch (e) {
-                this.logout();
-            } finally {
-                setTimeout(this.updateToonData, 10000);
-            }
-        }
-    }
+  public getBurnerInfo() {
+    return this.toonStatus
+      ? this.toonStatus.thermostatInfo.burnerInfo
+      : undefined;
+  }
 
-    private async setToonTemperature(temperature: number) {
-        if (!this.initialized) {
-            await this.initialize()
-        }
+  public getCurrentTemperature() {
+    return this.toonStatus
+      ? this.toonStatus.thermostatInfo.currentDisplayTemp / 100
+      : undefined;
+  }
 
-        if (this.clientData) {
-            this.log(`Setting Toon Temperature to ${temperature}`);
-            const destination_temperature = Math.round(temperature * 100);
-            const response = await request({
-                url: "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/setPoint",
-                method: "GET",
-                qs: {
-                    clientId: this.clientData.clientId,
-                    clientIdChecksum: this.clientData.clientIdChecksum,
-                    value: destination_temperature,
-                    random: uuid.v4(),
-                    timeout: 10000
-                },
-                json: true
-            });
-
-            if (response.success === true) {
-                this.log(`Successfully set Toon Temperature to ${temperature}`);
-                if (this.thermostatInfo) {
-                    this.thermostatInfo.currentSetpoint = temperature * 100;
-                }
-            } else {
-                throw new Error(response);
-            }
-        }
-    }
-
-    public async setTemperature(temperature: number) {
-        this.setToonTemperature(temperature);        
-    }
-
-    public getDisplayCommonName() {
-        return this.clientData ? this.clientData.agreements[this.agreementIndex].displayCommonName : "-";
-    }
-
-    public getHardwareVersion() {
-        return this.clientData ? this.clientData.agreements[this.agreementIndex].displayHardwareVersion : "-";
-    }
-
-    public getSoftwareVersion() {
-        return this.clientData ? this.clientData.agreements[this.agreementIndex].displaySoftwareVersion : "-";
-    }
-
-    public getBurnerInfo() {
-        return this.thermostatInfo ? this.thermostatInfo.burnerInfo : undefined;
-    }
-
-    public getCurrentTemperature() {
-        return this.thermostatInfo ? this.thermostatInfo.currentTemp / 100 : undefined;
-    }
-
-    public getCurrentSetpoint() {
-        return this.thermostatInfo ? this.thermostatInfo.currentSetpoint / 100 : undefined;
-    }
+  public getCurrentSetpoint() {
+    return this.toonStatus
+      ? this.toonStatus.thermostatInfo.currentSetpoint / 100
+      : undefined;
+  }
 }
