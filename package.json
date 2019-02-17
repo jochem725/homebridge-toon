@@ -1,6 +1,6 @@
 {
   "name": "homebridge-toon",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Homebridge Extension for Toon Thermostats",
   "main": "dist/src/index.js",
   "repository": {

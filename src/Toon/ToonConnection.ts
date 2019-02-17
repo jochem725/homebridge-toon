@@ -1,13 +1,16 @@
+import { RequestResponse } from 'request';
+import * as request from 'request-promise';
+
 import ToonConfig from '../config';
 import {
-    API_URL,
-    authenticateToken,
-    ThermostatInfo,
-    Token,
-    ToonAgreement,
-    toonGETRequest,
-    toonPUTRequest,
-    ToonStatus,
+  API_URL,
+  BASE_URL,
+  ThermostatInfo,
+  Token,
+  ToonAgreement,
+  ToonAuthorize,
+  ToonAuthorizeLegacy,
+  ToonStatus,
 } from './toonapi';
 
 export class ToonConnection {
@@ -44,24 +47,148 @@ export class ToonConnection {
   }
 
   private async initialize() {
-    this.token = await authenticateToken(
-      this.consumerKey,
-      this.consumerSecret,
-      this.username,
-      this.password
-    );
-
+    this.token = await this.authenticateToken();
     this.agreement = await this.getAgreementData();
+  }
+
+  private async authenticateToken() {
+    const code = await this.getChallengeCode();
+    const payload = {
+      client_id: this.consumerKey,
+      client_secret: this.consumerSecret,
+      grant_type: "authorization_code",
+      code
+    };
+
+    return this.requestToken(payload);
+  }
+
+  private async refreshToken() {
+    if (!this.token) {
+      throw Error("Attempt to refresh token without authentication token.");
+    }
+
+    if (Date.now() - this.token.issued_at > this.token.expires_in * 1000) {
+      const payload = {
+        client_id: this.consumerKey,
+        client_secret: this.consumerSecret,
+        grant_type: "refresh_token",
+        refresh_token: this.token.refresh_token
+      };
+
+      this.token = await this.requestToken(payload);
+    }
+  }
+
+  private async requestToken(payload: any): Promise<Token> {
+    const token = await request({
+      url: `${BASE_URL}token`,
+      method: "POST",
+      form: payload,
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      json: true
+    });
+
+    return {
+      ...token,
+      issued_at: Date.now()
+    };
+  }
+
+  private getHeader(token: Token) {
+    return {
+      Authorization: `Bearer ${token.access_token}`,
+      "content-type": "application/json",
+      "cache-control": "no-cache"
+    };
+  }
+
+  private async toonPUTRequest(url: string, body: any) {
+    if (this.token === undefined) {
+      throw Error("PUT not authorized");
+    }
+
+    await this.refreshToken();
+
+    const result = await request({
+      url,
+      method: "PUT",
+      headers: this.getHeader(this.token),
+      body: JSON.stringify(body)
+    });
+
+    return JSON.parse(result);
+  }
+
+  private async toonGETRequest(url: string) {
+    if (this.token === undefined) {
+      throw Error("GET not authorized");
+    }
+
+    const requestToken = await this.refreshToken();
+
+    return await request({
+      url,
+      method: "GET",
+      headers: this.getHeader(this.token),
+      json: true
+    });
+  }
+
+  private async getChallengeCode() {
+    // Go to the authorize page.
+    const authorizeParams: ToonAuthorize = {
+      tenant_id: "eneco",
+      response_type: "code",
+      redirect_uri: "http://127.0.0.1",
+      client_id: this.consumerKey
+    };
+
+    await request({
+      url: `${BASE_URL}authorize`,
+      method: "GET",
+      qs: authorizeParams
+    });
+
+    const formParams: ToonAuthorizeLegacy = {
+      username: this.username,
+      password: this.password,
+      tenant_id: "eneco",
+      response_type: "code",
+      client_id: this.consumerKey,
+      state: "",
+      scope: ""
+    };
+
+    // Now get the code.
+    const response: RequestResponse = await request({
+      url: `${BASE_URL}authorize/legacy`,
+      method: "POST",
+      form: formParams,
+      resolveWithFullResponse: true,
+      simple: false
+    });
+
+    const location = response.headers["location"] as string;
+
+    if (response.statusCode === 302 && location) {
+      try {
+        return location.split("code=")[1].split("&scope=")[0];
+      } catch {
+        throw Error(`Error while authorizing, please check your credentials.`);
+      }
+    } else {
+      throw Error(`Authentication error ${response.statusCode}.`);
+    }
   }
 
   private async getAgreementData() {
     this.log("Getting agreement...");
 
-    let agreements: ToonAgreement[] = await toonGETRequest(
-      `${API_URL}agreements`,
-      this.consumerKey,
-      this.consumerSecret,
-      this.token
+    let agreements: ToonAgreement[] = await this.toonGETRequest(
+      `${API_URL}agreements`
     );
 
     if (this.agreementIndex < agreements.length) {
@@ -93,11 +220,8 @@ export class ToonConnection {
       throw Error("Requested status but there is no agreement.");
     }
 
-    let toonStatus: ToonStatus = await toonGETRequest(
-      `${API_URL}${this.agreement.agreementId}/status`,
-      this.consumerKey,
-      this.consumerSecret,
-      this.token
+    let toonStatus: ToonStatus = await this.toonGETRequest(
+      `${API_URL}${this.agreement.agreementId}/status`
     );
 
     if (toonStatus.thermostatInfo) {
@@ -117,11 +241,8 @@ export class ToonConnection {
 
     this.log(`Setting Toon Temperature to ${temperature / 100}`);
 
-    let currentThermostatInfo: ThermostatInfo = await toonGETRequest(
-      `${API_URL}${this.agreement.agreementId}/thermostat`,
-      this.consumerKey,
-      this.consumerSecret,
-      this.token
+    let currentThermostatInfo: ThermostatInfo = await this.toonGETRequest(
+      `${API_URL}${this.agreement.agreementId}/thermostat`
     );
 
     const payload = {
@@ -131,12 +252,9 @@ export class ToonConnection {
       programState: 2
     };
 
-    const newThermostatInfo = await toonPUTRequest(
+    const newThermostatInfo = await this.toonPUTRequest(
       `${API_URL}${this.agreement.agreementId}/thermostat`,
-      payload,
-      this.consumerKey,
-      this.consumerSecret,
-      this.token
+      payload
     );
 
     this.log(`Successfully set Toon Temperature to ${temperature / 100}`);
