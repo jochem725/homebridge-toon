@@ -124,8 +124,6 @@ export class ToonConnection {
       this.token
     );
 
-    console.log(currentThermostatInfo);
-
     const payload = {
       ...currentThermostatInfo,
       currentSetpoint: temperature,
