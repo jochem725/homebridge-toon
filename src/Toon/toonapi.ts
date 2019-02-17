@@ -216,7 +216,11 @@ async function getChallengeCode(
   const location = response.headers["location"] as string;
 
   if (response.statusCode === 302 && location) {
-    return location.split("code=")[1].split("&scope=")[0];
+    try {
+      return location.split("code=")[1].split("&scope=")[0];
+    } catch {
+      throw Error(`Error while authorizing, please check your credentials.`);
+    }
   } else {
     throw Error(`Authentication error ${response.statusCode}.`);
   }
