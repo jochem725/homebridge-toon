@@ -186,7 +186,8 @@ class ToonAccessory {
       return;
     }
 
-    this.connection.setTemperature(value).then(() => callback());
+    this.connection.setTemperature(value);
+    callback();
   };
 
   getTemperatureDisplayUnits = (

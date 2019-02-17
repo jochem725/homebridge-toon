@@ -116,7 +116,6 @@ export class ToonConnection {
     }
 
     this.log(`Setting Toon Temperature to ${temperature / 100}`);
-    this.toonStatus.thermostatInfo.currentSetpoint = temperature;
 
     let currentThermostatInfo: ThermostatInfo = await toonGETRequest(
       `${API_URL}${this.agreement.agreementId}/thermostat`,
@@ -125,11 +124,18 @@ export class ToonConnection {
       this.token
     );
 
-    currentThermostatInfo.currentSetpoint = temperature;
+    console.log(currentThermostatInfo);
+
+    const payload = {
+      ...currentThermostatInfo,
+      currentSetpoint: temperature,
+      activeState: -1,
+      programState: 2
+    };
 
     const newThermostatInfo = await toonPUTRequest(
       `${API_URL}${this.agreement.agreementId}/thermostat`,
-      currentThermostatInfo,
+      payload,
       this.consumerKey,
       this.consumerSecret,
       this.token
@@ -138,13 +144,15 @@ export class ToonConnection {
     this.log(`Successfully set Toon Temperature to ${temperature / 100}`);
 
     this.toonStatus.thermostatInfo = newThermostatInfo;
+    this.onUpdate(this.toonStatus);
   }
 
   public async setTemperature(temperature: number) {
-    const destination_temperature = Math.round(temperature * 100);
+    const destination_temperature = Math.round(
+      (Math.round(temperature * 2) / 2) * 100
+    );
 
     await this.setToonTemperature(destination_temperature);
-    await this.getToonStatus();
   }
 
   public getDisplayCommonName() {
