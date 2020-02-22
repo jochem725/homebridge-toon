@@ -4,10 +4,14 @@ This plugin enables homebridge to communicate with Toon.
 
 `npm install -g homebridge-toon`
 
+
 ## Configuration
 
-To make the plugin work you need to obtain an API key from developer.toon.eu
+To make the plugin work you need to obtain a `consumer_key` from developer.toon.eu
 The following should be added to the homebridge config.json:
+
+An API token which is valid for 10 years can be obtained via
+`https://api.toon.eu/toonapi-accesstoken?tenant_id=eneco&client_id=<consumer_key>`
 
 ```javascript
     {
@@ -15,10 +19,7 @@ The following should be added to the homebridge config.json:
         {
           "platform": "Toon",
           "name": "<NAME>",
-          "username": "<ENECO USERNAME>",
-          "password": "<ENECO PASSWORD>"
-          "consumerKey": "<CONSUMER KEY>",
-          "consumerSecret": "<CONSUMER SECRET>"
+          "apiToken": "<API TOKEN FROM>",
         }
       ]
     }
