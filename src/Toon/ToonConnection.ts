@@ -1,7 +1,7 @@
-import { RequestResponse } from 'request';
-import * as request from 'request-promise';
+import { RequestResponse } from "request";
+import * as request from "request-promise";
 
-import ToonConfig from '../config';
+import ToonConfig from "../config";
 import {
   API_URL,
   BASE_URL,
@@ -10,31 +10,22 @@ import {
   ToonAgreement,
   ToonAuthorize,
   ToonAuthorizeLegacy,
-  ToonStatus,
-} from './toonapi';
+  ToonStatus
+} from "./toonapi";
 
 export class ToonConnection {
   private agreement?: ToonAgreement;
   private toonStatus?: ToonStatus;
-  private username: string;
-  private password: string;
   private agreementIndex: number;
 
-  private token?: Token;
-
-  private consumerKey: string;
-  private consumerSecret: string;
+  private token?: string;
 
   constructor(
     private config: ToonConfig,
     private log: (format: string, message?: any) => void,
     private onUpdate: (toonStatus: ToonStatus) => void
   ) {
-    this.username = this.config.username;
-    this.password = this.config.password;
-
-    this.consumerKey = this.config.consumerKey;
-    this.consumerSecret = this.config.consumerSecret;
+    this.token = this.config.apiToken;
 
     // Index selecting the agreement, if a user has multiple agreements (due to moving, etc.).
     this.agreementIndex = this.config.agreementIndex
@@ -47,59 +38,12 @@ export class ToonConnection {
   }
 
   private async initialize() {
-    this.token = await this.authenticateToken();
     this.agreement = await this.getAgreementData();
   }
 
-  private async authenticateToken() {
-    const code = await this.getChallengeCode();
-    const payload = {
-      client_id: this.consumerKey,
-      client_secret: this.consumerSecret,
-      grant_type: "authorization_code",
-      code
-    };
-
-    return this.requestToken(payload);
-  }
-
-  private async refreshToken() {
-    if (!this.token) {
-      throw Error("Attempt to refresh token without authentication token.");
-    }
-
-    if (Date.now() - this.token.issued_at > this.token.expires_in * 1000) {
-      const payload = {
-        client_id: this.consumerKey,
-        client_secret: this.consumerSecret,
-        grant_type: "refresh_token",
-        refresh_token: this.token.refresh_token
-      };
-
-      this.token = await this.requestToken(payload);
-    }
-  }
-
-  private async requestToken(payload: any): Promise<Token> {
-    const token = await request({
-      url: `${BASE_URL}token`,
-      method: "POST",
-      form: payload,
-      headers: {
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      json: true
-    });
-
+  private getHeader() {
     return {
-      ...token,
-      issued_at: Date.now()
-    };
-  }
-
-  private getHeader(token: Token) {
-    return {
-      Authorization: `Bearer ${token.access_token}`,
+      Authorization: `Bearer ${this.token}`,
       "content-type": "application/json",
       "cache-control": "no-cache"
     };
@@ -110,12 +54,10 @@ export class ToonConnection {
       throw Error("PUT not authorized");
     }
 
-    await this.refreshToken();
-
     const result = await request({
       url,
       method: "PUT",
-      headers: this.getHeader(this.token),
+      headers: this.getHeader(),
       body: JSON.stringify(body)
     });
 
@@ -127,61 +69,12 @@ export class ToonConnection {
       throw Error("GET not authorized");
     }
 
-    const requestToken = await this.refreshToken();
-
     return await request({
       url,
       method: "GET",
-      headers: this.getHeader(this.token),
+      headers: this.getHeader(),
       json: true
     });
-  }
-
-  private async getChallengeCode() {
-    // Go to the authorize page.
-    const authorizeParams: ToonAuthorize = {
-      tenant_id: "eneco",
-      response_type: "code",
-      redirect_uri: "http://127.0.0.1",
-      client_id: this.consumerKey
-    };
-
-    await request({
-      url: `${BASE_URL}authorize`,
-      method: "GET",
-      qs: authorizeParams
-    });
-
-    const formParams: ToonAuthorizeLegacy = {
-      username: this.username,
-      password: this.password,
-      tenant_id: "eneco",
-      response_type: "code",
-      client_id: this.consumerKey,
-      state: "",
-      scope: ""
-    };
-
-    // Now get the code.
-    const response: RequestResponse = await request({
-      url: `${BASE_URL}authorize/legacy`,
-      method: "POST",
-      form: formParams,
-      resolveWithFullResponse: true,
-      simple: false
-    });
-
-    const location = response.headers["location"] as string;
-
-    if (response.statusCode === 302 && location) {
-      try {
-        return location.split("code=")[1].split("&scope=")[0];
-      } catch {
-        throw Error(`Error while authorizing, please check your credentials.`);
-      }
-    } else {
-      throw Error(`Authentication error ${response.statusCode}.`);
-    }
   }
 
   private async getAgreementData() {
